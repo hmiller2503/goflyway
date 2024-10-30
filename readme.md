@@ -1,3 +1,9 @@
+## Write Buffer
+
+In HTTP mode when server received some data it can't just send them to the client directly because HTTP is not bi-directional, instead the server must wait until the client requests them, which means these data will be stored in memory for some time.
+
+You can use `-W bytes` to limit the maximum bytes a server can buffer (for each connection), by default it is 1048576 (1M). If the buffer reaches the limit, the following bytes will be blocked until the buffer has free space for them.
+
 # goflyway v2 - a local port forwarder built on HTTP
 
 ![](https://raw.githubusercontent.com/coyove/goflyway/gdev/.misc/logo.png)

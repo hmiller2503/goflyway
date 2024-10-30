@@ -13,6 +13,12 @@ import (
 	. "github.com/coyove/goflyway/v"
 )
 
+type commonConfig1 struct {
+	WriteBuffer int64
+	Key         string
+	Timeout     time.Duration
+	Stat        *Traffic
+}
 type commonConfig struct {
 	WriteBuffer int64
 	Key         string
