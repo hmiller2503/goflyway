@@ -1,92 +1,66 @@
-package goflyway
+package toh
 
 import (
+	"bufio"
+	"encoding/base32"
+	"fmt"
+	"math/rand"
 	"net"
-	"strings"
-	"sync"
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
-func isClosedConnErr(err error) bool {
-	return strings.Contains(err.Error(), "use of closed")
+var (
+	debug = false
+)
+
+type timeoutError struct{}
+
+func (e *timeoutError) Error() string {
+	return "operation timed out"
 }
 
-func isTimeoutErr(err error) bool {
-	if ne, ok := err.(net.Error); ok {
-		return ne.Timeout()
-	}
+func (e *timeoutError) Timeout() bool {
+	return true
+}
 
+func (e *timeoutError) Temporary() bool {
 	return false
 }
 
-type TokenBucket struct {
-	Speed int64 // bytes per second
-
-	capacity    int64 // bytes
-	maxCapacity int64
-	lastConsume time.Time
-
-	mu sync.Mutex
+type BufConn struct {
+	net.Conn
+	*bufio.Reader
 }
 
-func NewTokenBucket(speed, max int64) *TokenBucket {
-	return &TokenBucket{
-		Speed:       speed,
-		lastConsume: time.Now(),
-		maxCapacity: max,
-	}
+func NewBufConn(conn net.Conn) *BufConn {
+	return &BufConn{Conn: conn, Reader: bufio.NewReader(conn)}
 }
 
-func (tb *TokenBucket) Consume(n int64) {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-
-	now := time.Now()
-
-	if tb.Speed == 0 {
-		tb.lastConsume = now
-		return
-	}
-
-	ms := now.Sub(tb.lastConsume).Nanoseconds() / 1e6
-	tb.capacity += ms * tb.Speed / 1000
-
-	if tb.capacity > tb.maxCapacity {
-		tb.capacity = tb.maxCapacity
-	}
-
-	if n <= tb.capacity {
-		tb.lastConsume = now
-		tb.capacity -= n
-		return
-	}
-
-	sec := float64(n-tb.capacity) / float64(tb.Speed)
-	time.Sleep(time.Duration(sec*1000) * time.Millisecond)
-
-	tb.capacity = 0
-	tb.lastConsume = time.Now()
+func (c *BufConn) Write(p []byte) (int, error) {
+	return c.Conn.Write(p)
 }
 
-type Traffic struct {
-	sent     int64
-	received int64
+func (c *BufConn) Read(p []byte) (int, error) {
+	return c.Reader.Read(p)
 }
 
-func (t *Traffic) Set(s, r int64) {
-	t.sent, t.received = s, r
+var countermark uint32
+
+func newConnectionIdx() uint64 {
+	// 25bit timestamp (1 yr) | 16bit counter | 23bit random values
+	now := uint32(time.Now().Unix())
+	c := atomic.AddUint32(&countermark, 1)
+	return uint64(now)<<39 | uint64(c&0xffff)<<23 | uint64(rand.Uint32()&0x7fffff)
 }
 
-func (t *Traffic) Sent() *int64 {
-	if t == nil {
-		return nil
-	}
-	return &t.sent
+func formatConnIdx(idx uint64) string {
+	return base32.HexEncoding.EncodeToString((*(*[8]byte)(unsafe.Pointer(&idx)))[1:6])
 }
 
-func (t *Traffic) Recv() *int64 {
-	if t == nil {
-		return nil
-	}
-	return &t.received
+func frameTmpPath(connIdx uint64, idx uint32) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("%x-%d.toh", connIdx, idx))
 }
